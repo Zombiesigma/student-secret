@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "Secret": {
+      "title": "Secret",
+      "description": "An anonymous secret shared by a student",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string", "description": "The secret content" },
+        "category": { "type": "string", "description": "Category of the secret" },
+        "timestamp": { "type": "number", "description": "Creation timestamp" },
+        "likes": { "type": "number", "description": "Number of likes" },
+        "color": { "type": "string", "description": "Background color gradient class" }
+      },
+      "required": ["content", "category", "timestamp", "likes", "color"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile with role",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["email", "role"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "An anonymous comment on a secret",
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "likes": { "type": "number" }
+      },
+      "required": ["content", "timestamp", "likes"]
+    },
+    "Survey": {
+      "title": "Survey",
+      "description": "An anonymous survey created by admin",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "active": { "type": "boolean" },
+        "timestamp": { "type": "number" },
+        "questions": { "type": "array" }
+      },
+      "required": ["title", "description", "active", "timestamp", "questions"]
+    },
+    "SurveyResponse": {
+      "title": "SurveyResponse",
+      "description": "An anonymous response to a survey",
+      "type": "object",
+      "properties": {
+        "surveyId": { "type": "string" },
+        "answers": { "type": "object" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["surveyId", "answers", "timestamp"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "A report of inappropriate content",
+      "type": "object",
+      "properties": {
+        "targetId": { "type": "string", "description": "ID of the reported content (secret or comment)" },
+        "targetType": { "type": "string", "enum": ["secret", "comment"] },
+        "content": { "type": "string", "description": "The content being reported" },
+        "reason": { "type": "string", "description": "Reason for reporting" },
+        "timestamp": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "resolved"] }
+      },
+      "required": ["targetId", "targetType", "content", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "/surveys/{surveyId}": {
+      "schema": "Survey",
+      "description": "Collection of surveys"
+    },
+    "/survey_responses/{responseId}": {
+      "schema": "SurveyResponse",
+      "description": "Collection of anonymous survey responses"
+    },
+    "/secrets/{secretId}": {
+      "schema": "Secret",
+      "description": "Collection of anonymous secrets"
+    },
+    "/secrets/{secretId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Subcollection of comments for a secret"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Collection of reports for moderation"
+    }
+  }
+}
