@@ -11,7 +11,6 @@ import {
   Heart, 
   MessageCircle, 
   Search, 
-  Sparkles, 
   Clock,
   Send,
   X,
@@ -33,7 +32,9 @@ import {
   updateDoc, 
   doc, 
   increment,
-  getDocFromServer
+  getDocFromServer,
+  setDoc,
+  getDoc
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from './firebase';
@@ -89,14 +90,31 @@ function Feed() {
   });
 
   const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    let userMessage = 'An unexpected error occurred. Please try again.';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('permission-denied')) {
+        userMessage = 'You do not have permission to perform this action.';
+      } else if (error.message.includes('unavailable')) {
+        userMessage = 'Service is temporarily unavailable. Please check your connection.';
+      } else if (error.message.includes('quota-exceeded')) {
+        userMessage = 'Daily limit reached. Please try again tomorrow.';
+      }
+    }
+
     const errInfo: FirestoreErrorInfo = {
       error: error instanceof Error ? error.message : String(error),
-      authInfo: auth.currentUser?.uid,
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+      },
       operationType,
       path
     };
     console.error('Firestore Error: ', JSON.stringify(errInfo));
-    setError(error instanceof Error ? error.message : 'An unknown error occurred');
+    showToast(userMessage);
   };
 
   const showToast = (message: string) => {
@@ -112,7 +130,28 @@ function Feed() {
   };
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (u) => setUser(u));
+    const unsubAuth = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        try {
+          const userRef = doc(db, 'users', u.uid);
+          const userDoc = await getDoc(userRef);
+          if (!userDoc.exists()) {
+            await setDoc(userRef, {
+              email: u.email,
+              role: u.email === 'gunturfadilah140@gmail.com' ? 'admin' : 'user',
+              lastActive: Date.now()
+            });
+          } else {
+            await updateDoc(userRef, {
+              lastActive: Date.now()
+            });
+          }
+        } catch (err) {
+          console.error('Error syncing user profile:', err);
+        }
+      }
+    });
 
     const testConnection = async () => {
       try {
@@ -166,6 +205,7 @@ function Feed() {
       await addDoc(collection(db, 'secrets'), secretData);
       setNewSecret('');
       setIsModalOpen(false);
+      showToast('Secret shared successfully!');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'secrets');
     }
@@ -196,7 +236,17 @@ function Feed() {
             timestamp: Date.now(),
             status: 'pending'
           });
-          alert('Thank you. The secret has been reported to moderators.');
+
+          await addDoc(collection(db, 'notifications'), {
+            type: 'report',
+            title: 'New Secret Reported',
+            message: `A secret in "${secret.category}" has been reported.`,
+            timestamp: Date.now(),
+            read: false,
+            link: '/admin'
+          });
+
+          showToast('Thank you. The secret has been reported.');
         } catch (err) {
           handleFirestoreError(err, OperationType.CREATE, 'reports');
         }
@@ -215,7 +265,7 @@ function Feed() {
       {/* Header */}
       <header className="sticky top-0 z-40 glass border-b border-glass-border px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-3">
+          <Link to="/feed" className="flex items-center gap-3">
             <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl flex items-center justify-center neon-glow">
               <Ghost className="text-white w-6 h-6" />
             </div>
@@ -373,7 +423,6 @@ function Feed() {
                       <Share2 className="w-4 h-4" />
                     </button>
                   </div>
-                  <Sparkles className="w-4 h-4 text-muted/20 group-hover:text-purple-500/50 transition-colors" />
                 </div>
               </motion.div>
             ))}
@@ -498,8 +547,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const hasVisited = localStorage.getItem('hasVisited');
   const location = useLocation();
 
-  if (!hasVisited && location.pathname !== '/welcome') {
-    return <Navigate to="/welcome" replace />;
+  // Allow access to welcome page always
+  if (location.pathname === '/') return <>{children}</>;
+
+  if (!hasVisited && location.pathname !== '/') {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -509,8 +561,8 @@ export default function App() {
   return (
     <ThemeProvider>
       <Routes>
-        <Route path="/welcome" element={<WelcomePage />} />
-        <Route path="/" element={
+        <Route path="/" element={<WelcomePage />} />
+        <Route path="/feed" element={
           <ProtectedRoute>
             <Feed />
           </ProtectedRoute>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Trash2, 
@@ -18,7 +18,12 @@ import {
   ClipboardList,
   Flag,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Bell,
+  UserPlus,
+  Settings,
+  Mail,
+  Clock
 } from 'lucide-react';
 import { 
   collection, 
@@ -29,21 +34,32 @@ import {
   doc,
   getDocs,
   updateDoc,
-  increment
+  increment,
+  limit,
+  setDoc,
+  addDoc
 } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { db, auth } from './firebase';
-import { Secret, Report } from './types';
+import { signOut, getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { initializeApp } from 'firebase/app';
+import { db, auth, firebaseConfig } from './firebase';
+import { Secret, Report, UserProfile, AdminNotification } from './types';
 import SurveyManager from './components/SurveyManager';
 import ConfirmModal from './components/ConfirmModal';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'secrets' | 'surveys' | 'reports'>('secrets');
+  const [activeTab, setActiveTab] = useState<'secrets' | 'surveys' | 'reports' | 'users' | 'notifications'>('secrets');
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [showAddStaff, setShowAddStaff] = useState(false);
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffPassword, setStaffPassword] = useState('');
+  const [staffLoading, setStaffLoading] = useState(false);
   const [userCount, setUserCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -58,6 +74,11 @@ export default function AdminDashboard() {
     variant: 'primary'
   });
 
+  const showToast = (message: string) => {
+    setToast({ message, visible: true });
+    setTimeout(() => setToast({ message: '', visible: false }), 3000);
+  };
+
   useEffect(() => {
     const q = query(collection(db, 'secrets'), orderBy('timestamp', 'desc'));
     const unsubSecrets = onSnapshot(q, (snapshot) => {
@@ -69,15 +90,21 @@ export default function AdminDashboard() {
       setReports(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Report[]);
     });
 
-    const fetchUsers = async () => {
-      const snap = await getDocs(collection(db, 'users'));
-      setUserCount(snap.size);
-    };
-    fetchUsers();
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as UserProfile[]);
+      setUserCount(snapshot.size);
+    });
+
+    const qNotifications = query(collection(db, 'notifications'), orderBy('timestamp', 'desc'), limit(50));
+    const unsubNotifications = onSnapshot(qNotifications, (snapshot) => {
+      setNotifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as AdminNotification[]);
+    });
 
     return () => {
       unsubSecrets();
       unsubReports();
+      unsubUsers();
+      unsubNotifications();
     };
   }, []);
 
@@ -109,6 +136,31 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error(err);
       alert('Failed to resolve report.');
+    }
+  };
+
+  const handleUpdateUserRole = async (userId: string, newRole: 'admin' | 'user') => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { role: newRole });
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update user role.');
+    }
+  };
+
+  const handleMarkNotificationRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'notifications', id));
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -147,6 +199,39 @@ export default function AdminDashboard() {
     s.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleAddStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStaffLoading(true);
+    try {
+      // Use a secondary app instance to create the user without logging out the current admin
+      const secondaryApp = initializeApp(firebaseConfig, "SecondaryRegistration");
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, staffEmail, staffPassword);
+      const newUser = userCredential.user;
+
+      // Create user doc with admin role
+      await setDoc(doc(db, 'users', newUser.uid), {
+        email: staffEmail,
+        role: 'admin',
+        lastActive: Date.now()
+      });
+
+      // Log out the secondary instance immediately
+      await signOut(secondaryAuth);
+      
+      showToast('Staff member registered successfully!');
+      setShowAddStaff(false);
+      setStaffEmail('');
+      setStaffPassword('');
+    } catch (err: any) {
+      console.error(err);
+      showToast('Error: ' + err.message);
+    } finally {
+      setStaffLoading(false);
+    }
+  };
 
   const totalLikes = secrets.reduce((acc, s) => acc + s.likes, 0);
 
@@ -241,6 +326,25 @@ export default function AdminDashboard() {
               )}
             </div>
             Reports
+          </button>
+          <button 
+            onClick={() => setActiveTab('users')}
+            className={`px-4 sm:px-6 py-2 sm:py-3 rounded-xl sm:rounded-2xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'users' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'bg-text/5 text-muted hover:bg-text/10'}`}
+          >
+            <Users className="w-4 h-4 sm:w-5 sm:h-5" />
+            Users
+          </button>
+          <button 
+            onClick={() => setActiveTab('notifications')}
+            className={`px-4 sm:px-6 py-2 sm:py-3 rounded-xl sm:rounded-2xl font-bold transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'notifications' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/20' : 'bg-text/5 text-muted hover:bg-text/10'}`}
+          >
+            <div className="relative">
+              <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
+              {notifications.filter(n => !n.read).length > 0 && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 sm:w-2.5 sm:h-2.5 bg-rose-500 rounded-full border-2 border-bg" />
+              )}
+            </div>
+            Alerts
           </button>
         </div>
 
@@ -337,7 +441,7 @@ export default function AdminDashboard() {
           </div>
         ) : activeTab === 'surveys' ? (
           <SurveyManager />
-        ) : (
+        ) : activeTab === 'reports' ? (
           <div className="glass rounded-2xl sm:rounded-[2.5rem] overflow-hidden border-glass-border">
             <div className="p-6 sm:p-8 border-b border-glass-border">
               <h2 className="text-xl sm:text-2xl font-display font-bold">Content Reports</h2>
@@ -417,6 +521,145 @@ export default function AdminDashboard() {
               </div>
             )}
           </div>
+        ) : activeTab === 'users' ? (
+          <div className="glass rounded-2xl sm:rounded-[2.5rem] overflow-hidden border-glass-border">
+          <div className="p-6 sm:p-8 border-b border-glass-border flex items-center justify-between">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-display font-bold">User Management</h2>
+              <p className="text-muted text-xs sm:text-sm">Manage user accounts and permissions</p>
+            </div>
+            <button 
+              onClick={() => setShowAddStaff(true)}
+              className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg shadow-purple-900/20"
+            >
+              <UserPlus className="w-4 h-4" />
+              Add Staff
+            </button>
+          </div>
+
+            <div className="overflow-x-auto no-scrollbar">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="text-muted text-[10px] uppercase tracking-widest font-bold border-b border-glass-border">
+                    <th className="px-8 py-4">User</th>
+                    <th className="px-8 py-4">Role</th>
+                    <th className="px-8 py-4">Last Active</th>
+                    <th className="px-8 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-glass-border">
+                  <AnimatePresence>
+                    {users.map((user) => (
+                      <motion.tr 
+                        key={user.id}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="hover:bg-text/5 transition-colors group"
+                      >
+                        <td className="px-8 py-6">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-500 font-bold">
+                              {user.email[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">{user.email}</p>
+                              <p className="text-[10px] text-muted font-mono">{user.id}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-8 py-6">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded ${user.role === 'admin' ? 'bg-purple-500/20 text-purple-500' : 'bg-text/10 text-text/60'}`}>
+                            {user.role.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-8 py-6">
+                          <p className="text-xs text-muted">
+                            {user.lastActive ? new Date(user.lastActive).toLocaleString() : 'Never'}
+                          </p>
+                        </td>
+                        <td className="px-8 py-6 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button 
+                              onClick={() => handleUpdateUserRole(user.id, user.role === 'admin' ? 'user' : 'admin')}
+                              className="p-2 hover:bg-purple-500/20 text-purple-500/60 hover:text-purple-500 rounded-xl transition-all"
+                              title={user.role === 'admin' ? 'Demote to User' : 'Promote to Admin'}
+                            >
+                              <Shield className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="glass rounded-2xl sm:rounded-[2.5rem] overflow-hidden border-glass-border">
+            <div className="p-6 sm:p-8 border-b border-glass-border flex items-center justify-between">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-display font-bold">Admin Alerts</h2>
+                <p className="text-muted text-xs sm:text-sm">System notifications and report alerts</p>
+              </div>
+              <button 
+                onClick={() => notifications.forEach(n => !n.read && handleMarkNotificationRead(n.id))}
+                className="text-xs font-bold text-purple-500 hover:text-purple-400 transition-colors"
+              >
+                Mark all as read
+              </button>
+            </div>
+
+            <div className="divide-y divide-glass-border">
+              <AnimatePresence>
+                {notifications.map((notification) => (
+                  <motion.div 
+                    key={notification.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    className={`p-6 flex items-start gap-4 transition-colors ${notification.read ? 'opacity-60' : 'bg-purple-500/5'}`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${notification.type === 'report' ? 'bg-rose-500/10 text-rose-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                      {notification.type === 'report' ? <Flag className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <h4 className="font-bold text-sm">{notification.title}</h4>
+                        <span className="text-[10px] text-muted font-bold uppercase tracking-widest">
+                          {new Date(notification.timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted mb-3">{notification.message}</p>
+                      <div className="flex items-center gap-4">
+                        {!notification.read && (
+                          <button 
+                            onClick={() => handleMarkNotificationRead(notification.id)}
+                            className="text-[10px] font-bold text-purple-500 uppercase tracking-widest hover:text-purple-400"
+                          >
+                            Mark as read
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => handleDeleteNotification(notification.id)}
+                          className="text-[10px] font-bold text-rose-500 uppercase tracking-widest hover:text-rose-400"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {notifications.length === 0 && (
+                <div className="py-20 text-center text-white/20">
+                  <Bell className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                  <p className="font-display text-lg">No notifications yet.</p>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </main>
 
@@ -428,6 +671,91 @@ export default function AdminDashboard() {
         onConfirm={confirmModal.onConfirm}
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast.visible && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] bg-purple-600 text-white px-6 py-3 rounded-2xl font-bold shadow-xl shadow-purple-900/40 flex items-center gap-2"
+          >
+            <CheckCircle className="w-5 h-5" />
+            {toast.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Staff Modal */}
+      <AnimatePresence>
+        {showAddStaff && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddStaff(false)}
+              className="absolute inset-0 bg-bg/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md glass rounded-[2.5rem] p-8 border-glass-border"
+            >
+              <h3 className="text-2xl font-display font-bold mb-2">Register New Staff</h3>
+              <p className="text-muted text-sm mb-8">Create a new administrator account</p>
+
+              <form onSubmit={handleAddStaff} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-muted mb-2 ml-1">Email Address</label>
+                  <input 
+                    type="email"
+                    required
+                    value={staffEmail}
+                    onChange={(e) => setStaffEmail(e.target.value)}
+                    className="w-full bg-text/5 border border-glass-border rounded-2xl py-4 px-6 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                    placeholder="staff@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-muted mb-2 ml-1">Password</label>
+                  <input 
+                    type="password"
+                    required
+                    value={staffPassword}
+                    onChange={(e) => setStaffPassword(e.target.value)}
+                    className="w-full bg-text/5 border border-glass-border rounded-2xl py-4 px-6 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => setShowAddStaff(false)}
+                    className="flex-1 px-6 py-4 rounded-2xl font-bold text-muted hover:bg-text/5 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={staffLoading}
+                    className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-6 py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20"
+                  >
+                    {staffLoading ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      'Register'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -48,7 +48,7 @@ export default function AdminPage() {
   }
 
   if (!user) {
-    return <AdminAuth onBack={() => window.location.href = '/'} />;
+    return <AdminAuth onBack={() => window.location.href = '/feed'} />;
   }
 
   if (isAdmin === false) {
@@ -63,7 +63,7 @@ export default function AdminPage() {
           Please contact the system administrator if you believe this is an error.
         </p>
         <button 
-          onClick={() => window.location.href = '/'}
+          onClick={() => window.location.href = '/feed'}
           className="bg-white text-black px-8 py-3 rounded-2xl font-bold hover:bg-white/90 transition-all"
         >
           Return to Home

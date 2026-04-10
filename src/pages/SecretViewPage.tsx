@@ -15,9 +15,9 @@ import {
   Ghost, 
   Flag, 
   Share2,
-  Sparkles,
   ArrowUpDown,
   AlertCircle,
+  ChevronDown,
   Check
 } from 'lucide-react';
 import { 
@@ -31,10 +31,26 @@ import {
   addDoc,
   getDoc
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { Secret, Comment } from '../types';
 import ConfirmModal from '../components/ConfirmModal';
 import { useTheme } from '../context/ThemeContext';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: any;
+}
 
 export default function SecretViewPage() {
   const { id } = useParams();
@@ -45,7 +61,7 @@ export default function SecretViewPage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [sortOrder, setSortOrder] = useState<'top' | 'newest'>('top');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
@@ -65,6 +81,34 @@ export default function SecretViewPage() {
   const showToast = (message: string) => {
     setToast({ message, visible: true });
     setTimeout(() => setToast({ message: '', visible: false }), 3000);
+  };
+
+  const handleFirestoreError = (error: unknown, operationType: OperationType, path: string | null) => {
+    let userMessage = 'An unexpected error occurred. Please try again.';
+    
+    if (error instanceof Error) {
+      if (error.message.includes('permission-denied')) {
+        userMessage = 'You do not have permission to perform this action.';
+      } else if (error.message.includes('unavailable')) {
+        userMessage = 'Service is temporarily unavailable. Please check your connection.';
+      } else if (error.message.includes('quota-exceeded')) {
+        userMessage = 'Daily limit reached. Please try again tomorrow.';
+      }
+    }
+
+    const errInfo: FirestoreErrorInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+        isAnonymous: auth.currentUser?.isAnonymous,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    showToast(userMessage);
   };
 
   useEffect(() => {
@@ -102,9 +146,14 @@ export default function SecretViewPage() {
 
   const sortedComments = useMemo(() => {
     return [...comments].sort((a, b) => {
-      const likesA = a.likes || 0;
-      const likesB = b.likes || 0;
-      return sortOrder === 'desc' ? likesB - likesA : likesA - likesB;
+      if (sortOrder === 'top') {
+        const likesA = a.likes || 0;
+        const likesB = b.likes || 0;
+        if (likesA !== likesB) return likesB - likesA;
+        return b.timestamp - a.timestamp;
+      } else {
+        return b.timestamp - a.timestamp;
+      }
     });
   }, [comments, sortOrder]);
 
@@ -115,7 +164,7 @@ export default function SecretViewPage() {
         likes: increment(1)
       });
     } catch (err) {
-      console.error(err);
+      handleFirestoreError(err, OperationType.UPDATE, `secrets/${secret.id}`);
     }
   };
 
@@ -126,11 +175,41 @@ export default function SecretViewPage() {
         likes: increment(1)
       });
     } catch (err) {
-      console.error(err);
+      handleFirestoreError(err, OperationType.UPDATE, `secrets/${id}/comments/${commentId}`);
     }
   };
 
-  const handlePostComment = async () => {
+  const REACTIONS = [
+    { emoji: '😢', label: 'Sad' },
+    { emoji: '😮', label: 'Shocked' },
+    { emoji: '🤝', label: 'Relatable' },
+    { emoji: '🔥', label: 'Hot' },
+    { emoji: '💯', label: 'True' }
+  ];
+
+  const handleReaction = async (emoji: string) => {
+    if (!id || !secret) return;
+    try {
+      await updateDoc(doc(db, 'secrets', id), {
+        [`reactions.${emoji}`]: increment(1)
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `secrets/${id}`);
+    }
+  };
+
+  const handleCommentReaction = async (commentId: string, emoji: string) => {
+    if (!id) return;
+    try {
+      await updateDoc(doc(db, 'secrets', id, 'comments', commentId), {
+        [`reactions.${emoji}`]: increment(1)
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `secrets/${id}/comments/${commentId}`);
+    }
+  };
+
+  const submitComment = async () => {
     if (!id || !newComment.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
@@ -146,11 +225,24 @@ export default function SecretViewPage() {
       });
 
       setNewComment('');
+      showToast('Comment posted successfully!');
     } catch (err) {
-      console.error(err);
+      handleFirestoreError(err, OperationType.WRITE, `secrets/${id}/comments`);
     } finally {
       setIsSubmitting(false);
+      setConfirmModal(prev => ({ ...prev, isOpen: false }));
     }
+  };
+
+  const handlePostComment = async () => {
+    if (!id || !newComment.trim() || isSubmitting) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Post Comment',
+      message: 'Are you sure you want to post this comment anonymously?',
+      onConfirm: submitComment
+    });
   };
 
   const handleReportSecret = () => {
@@ -168,9 +260,19 @@ export default function SecretViewPage() {
             timestamp: Date.now(),
             status: 'pending'
           });
-          alert('Thank you. The secret has been reported.');
+
+          await addDoc(collection(db, 'notifications'), {
+            type: 'report',
+            title: 'New Secret Reported',
+            message: `A secret in "${secret.category}" has been reported.`,
+            timestamp: Date.now(),
+            read: false,
+            link: '/admin'
+          });
+
+          showToast('Thank you. The secret has been reported.');
         } catch (err) {
-          console.error(err);
+          handleFirestoreError(err, OperationType.CREATE, 'reports');
         }
       }
     });
@@ -191,9 +293,19 @@ export default function SecretViewPage() {
             status: 'pending',
             secretId: id
           });
-          alert('Thank you. The comment has been reported.');
+
+          await addDoc(collection(db, 'notifications'), {
+            type: 'report',
+            title: 'New Comment Reported',
+            message: `A comment has been reported for inappropriate content.`,
+            timestamp: Date.now(),
+            read: false,
+            link: '/admin'
+          });
+
+          showToast('Thank you. The comment has been reported.');
         } catch (err) {
-          console.error(err);
+          handleFirestoreError(err, OperationType.CREATE, 'reports');
         }
       }
     });
@@ -213,7 +325,7 @@ export default function SecretViewPage() {
         <AlertCircle className="w-12 h-12 text-rose-500 mb-4" />
         <h2 className="text-2xl font-bold mb-2">{error || 'Secret not found'}</h2>
         <button 
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/feed')}
           className="text-purple-500 font-bold hover:underline"
         >
           Back to Feed
@@ -228,7 +340,7 @@ export default function SecretViewPage() {
       <nav className="glass border-b border-glass-border px-6 py-4 sticky top-0 z-50">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <button 
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/feed')}
             className="flex items-center gap-2 text-text/40 hover:text-text transition-colors font-bold"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -282,25 +394,45 @@ export default function SecretViewPage() {
                 "{secret.content}"
               </h2>
 
-              <div className="flex items-center justify-between pt-8 border-t border-glass-border">
-                <div className="flex items-center gap-8">
-                  <button 
-                    onClick={handleLikeSecret}
-                    className="flex items-center gap-3 text-text/60 hover:text-rose-500 transition-all group"
-                  >
-                    <div className="p-3 rounded-2xl bg-rose-500/5 group-hover:bg-rose-500/10 transition-colors">
-                      <Heart className={`w-6 h-6 ${secret.likes > 0 ? 'fill-rose-500 text-rose-500' : ''}`} />
-                    </div>
-                    <span className="text-lg font-bold">{secret.likes}</span>
-                  </button>
-                  <div className="flex items-center gap-3 text-text/60">
-                    <div className="p-3 rounded-2xl bg-blue-500/5">
-                      <MessageCircle className="w-6 h-6 text-blue-500" />
-                    </div>
-                    <span className="text-lg font-bold">{secret.commentCount || 0}</span>
+              <div className="flex items-center justify-start pt-8 border-t border-glass-border gap-10">
+                <button 
+                  onClick={handleLikeSecret}
+                  className="flex items-center gap-3 text-text/60 hover:text-rose-500 transition-all group"
+                >
+                  <div className="p-3 rounded-2xl bg-rose-500/5 group-hover:bg-rose-500/10 transition-colors">
+                    <Heart className={`w-6 h-6 ${secret.likes > 0 ? 'fill-rose-500 text-rose-500' : ''}`} />
                   </div>
+                  <span className="text-lg font-bold">{secret.likes}</span>
+                </button>
+                <div className="flex items-center gap-3 text-text/60">
+                  <div className="p-3 rounded-2xl bg-blue-500/5">
+                    <MessageCircle className="w-6 h-6 text-blue-500" />
+                  </div>
+                  <span className="text-lg font-bold">{secret.commentCount || 0}</span>
                 </div>
-                <Sparkles className="w-6 h-6 text-text/10" />
+              </div>
+
+              {/* Reactions Section */}
+              <div className="flex flex-wrap gap-3 mt-8">
+                {[
+                  { emoji: '😢', label: 'Sad' },
+                  { emoji: '😮', label: 'Shocked' },
+                  { emoji: '🤝', label: 'Relatable' },
+                  { emoji: '🔥', label: 'Hot' },
+                  { emoji: '💯', label: 'True' }
+                ].map(({ emoji, label }) => (
+                  <button
+                    key={emoji}
+                    onClick={() => handleReaction(emoji)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-glass-bg hover:bg-text/5 border border-glass-border transition-all group"
+                    title={label}
+                  >
+                    <span className="text-xl group-hover:scale-125 transition-transform">{emoji}</span>
+                    <span className="text-sm font-bold text-muted">
+                      {secret.reactions?.[emoji] || 0}
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           </motion.div>
@@ -315,13 +447,29 @@ export default function SecretViewPage() {
                 </span>
               </h3>
               {comments.length > 1 && (
-                <button 
-                  onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                  className="flex items-center gap-2 px-4 py-2 bg-glass-bg hover:bg-text/5 rounded-xl text-xs font-bold uppercase tracking-widest text-muted transition-all"
-                >
-                  <ArrowUpDown className="w-4 h-4" />
-                  {sortOrder === 'desc' ? 'Top' : 'Newest'}
-                </button>
+                <div className="relative group/sort">
+                  <button 
+                    className="flex items-center gap-2 px-4 py-2 bg-glass-bg hover:bg-text/5 rounded-xl text-xs font-bold uppercase tracking-widest text-muted transition-all border border-glass-border"
+                  >
+                    <ArrowUpDown className="w-4 h-4" />
+                    {sortOrder === 'top' ? 'Top' : 'Newest'}
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  <div className="absolute right-0 top-full mt-2 w-32 glass border border-glass-border rounded-xl overflow-hidden opacity-0 invisible group-hover/sort:opacity-100 group-hover/sort:visible transition-all z-50">
+                    <button 
+                      onClick={() => setSortOrder('top')}
+                      className={`w-full px-4 py-2 text-left text-xs font-bold uppercase tracking-widest hover:bg-text/5 transition-colors ${sortOrder === 'top' ? 'text-purple-500' : 'text-muted'}`}
+                    >
+                      Top
+                    </button>
+                    <button 
+                      onClick={() => setSortOrder('newest')}
+                      className={`w-full px-4 py-2 text-left text-xs font-bold uppercase tracking-widest hover:bg-text/5 transition-colors ${sortOrder === 'newest' ? 'text-purple-500' : 'text-muted'}`}
+                    >
+                      Newest
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -377,6 +525,24 @@ export default function SecretViewPage() {
                           <span className="text-xs font-bold">{comment.likes || 0}</span>
                         </button>
                       </div>
+
+                      {/* Comment Reactions */}
+                      <div className="flex flex-wrap gap-2 mb-4 px-2">
+                        {REACTIONS.map(({ emoji, label }) => (
+                          <button
+                            key={emoji}
+                            onClick={() => handleCommentReaction(comment.id, emoji)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-glass-bg hover:bg-text/5 border border-glass-border transition-all group/react"
+                            title={label}
+                          >
+                            <span className="text-sm group-hover/react:scale-125 transition-transform">{emoji}</span>
+                            <span className="text-[10px] font-bold text-muted">
+                              {comment.reactions?.[emoji] || 0}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+
                       <div className="flex items-center justify-between px-2">
                         <div className="flex items-center gap-4 text-[10px] text-muted font-bold uppercase tracking-widest">
                           <span className="flex items-center gap-1">

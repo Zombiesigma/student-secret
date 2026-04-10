@@ -30,6 +30,7 @@ export interface Comment {
   content: string;
   timestamp: number;
   likes: number;
+  reactions?: Record<string, number>;
 }
 
 export interface Secret {
@@ -40,6 +41,7 @@ export interface Secret {
   likes: number;
   color: string;
   commentCount?: number;
+  reactions?: Record<string, number>;
 }
 
 export interface Report {
@@ -51,6 +53,23 @@ export interface Report {
   timestamp: number;
   status: 'pending' | 'resolved';
   secretId?: string; // For comments, to know which secret they belong to
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: 'admin' | 'user';
+  lastActive?: number;
+}
+
+export interface AdminNotification {
+  id: string;
+  type: 'report' | 'system';
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+  link?: string;
 }
 
 export const CATEGORIES: Category[] = ['Confession', 'Crush', 'Study', 'Rant', 'Other'];

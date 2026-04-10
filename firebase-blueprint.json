@@ -9,7 +9,8 @@
         "category": { "type": "string", "description": "Category of the secret" },
         "timestamp": { "type": "number", "description": "Creation timestamp" },
         "likes": { "type": "number", "description": "Number of likes" },
-        "color": { "type": "string", "description": "Background color gradient class" }
+        "color": { "type": "string", "description": "Background color gradient class" },
+        "reactions": { "type": "object", "description": "Map of emoji reactions to counts" }
       },
       "required": ["content", "category", "timestamp", "likes", "color"]
     },
@@ -30,7 +31,8 @@
       "properties": {
         "content": { "type": "string" },
         "timestamp": { "type": "number" },
-        "likes": { "type": "number" }
+        "likes": { "type": "number" },
+        "reactions": { "type": "object", "description": "Map of emoji reactions to counts" }
       },
       "required": ["content", "timestamp", "likes"]
     },
@@ -71,6 +73,20 @@
         "status": { "type": "string", "enum": ["pending", "resolved"] }
       },
       "required": ["targetId", "targetType", "content", "timestamp", "status"]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "A notification for administrators",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["report", "system"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "read": { "type": "boolean" },
+        "link": { "type": "string" }
+      },
+      "required": ["type", "title", "message", "timestamp", "read"]
     }
   },
   "firestore": {
@@ -97,6 +113,10 @@
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "Collection of reports for moderation"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AdminNotification",
+      "description": "Collection of notifications for administrators"
     }
   }
 }

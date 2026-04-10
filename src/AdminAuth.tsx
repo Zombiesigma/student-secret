@@ -80,10 +80,10 @@ export default function AdminAuth({ onBack }: AdminAuthProps) {
 
         <div className="text-center mt-8 mb-10">
           <h2 className="text-3xl font-display font-bold mb-2">
-            {isLogin ? 'Admin Login' : 'Admin Register'}
+            Admin Login
           </h2>
           <p className="text-white/40 text-sm">
-            {isLogin ? 'Access the control center' : 'Join the moderation team'}
+            Access the control center
           </p>
         </div>
 
@@ -95,21 +95,6 @@ export default function AdminAuth({ onBack }: AdminAuthProps) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <div className="relative">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
-                <LogIn className="w-5 h-5" />
-              </div>
-              <input 
-                type="text"
-                placeholder="Full Name"
-                required
-                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-          )}
           <div className="relative">
             <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
               <Mail className="w-5 h-5" />
@@ -144,27 +129,19 @@ export default function AdminAuth({ onBack }: AdminAuthProps) {
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin" />
-            ) : isLogin ? (
+            ) : (
               <>
                 <LogIn className="w-5 h-5" />
                 Login
-              </>
-            ) : (
-              <>
-                <UserPlus className="w-5 h-5" />
-                Register
               </>
             )}
           </button>
         </form>
 
         <div className="mt-8 text-center">
-          <button 
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-white/40 hover:text-white text-sm transition-colors"
-          >
-            {isLogin ? "Don't have an account? Register" : "Already have an account? Login"}
-          </button>
+          <p className="text-white/20 text-xs uppercase tracking-widest font-bold">
+            Secure Access Only
+          </p>
         </div>
       </motion.div>
     </div>
