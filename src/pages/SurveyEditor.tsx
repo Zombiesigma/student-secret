@@ -61,12 +61,17 @@ export default function SurveyEditor() {
   }, [id]);
 
   const addQuestion = (type: SurveyQuestionType) => {
-    setQuestions([...questions, { 
-      id: Math.random().toString(36).substr(2, 9), 
-      type, 
-      question: '', 
-      options: type === 'multiple-choice' ? ['', ''] : undefined 
-    }]);
+    const newQuestion: Partial<SurveyQuestion> = {
+      id: Math.random().toString(36).substr(2, 9),
+      type,
+      question: ''
+    };
+
+    if (type === 'multiple-choice') {
+      newQuestion.options = ['', ''];
+    }
+
+    setQuestions([...questions, newQuestion]);
   };
 
   const removeQuestion = (index: number) => {
@@ -101,10 +106,27 @@ export default function SurveyEditor() {
     setIsSubmitting(true);
 
     try {
+      const sanitizedQuestions = questions.map((q) => {
+        const baseQuestion: SurveyQuestion = {
+          id: q.id || Math.random().toString(36).substr(2, 9),
+          type: q.type as SurveyQuestionType,
+          question: q.question || ''
+        };
+
+        if (q.type === 'multiple-choice') {
+          return {
+            ...baseQuestion,
+            options: q.options && q.options.length > 0 ? q.options : ['', '']
+          };
+        }
+
+        return baseQuestion;
+      });
+
       const surveyData = {
         title,
         description,
-        questions,
+        questions: sanitizedQuestions,
         active: true,
         timestamp: Date.now()
       };
